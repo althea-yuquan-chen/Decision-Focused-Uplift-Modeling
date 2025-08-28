@@ -9,6 +9,7 @@
 4. The directory structure is shown as follows.
 
 |-----code
+|     |-----my_xxx_sharedlayer.ipynb                   # My model for DFUM in CRITEO-UPLIFT v2
 |     |-----uplift_model_criteo_finalmodel.ipynb       # A demo to run the model for predicting CATE in CRITEO-UPLIFT v2
 |     |-----roi_model_criteo_finalmodel_1.ipynb        # A demo to run the model for predicting ROI in CRITEO-UPLIFT v2
 |     |-----roi_model_criteo_finalmodel_2.ipynb        # A demo to run the model for predicting Marginal Utilities in CRITEO-UPLIFT v2

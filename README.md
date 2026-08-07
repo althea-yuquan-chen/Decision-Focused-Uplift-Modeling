@@ -8,7 +8,7 @@ A research implementation of **Decision-Focused Uplift Modeling**, a framework t
 
 Uplift modeling estimates the **Individual Treatment Effect (ITE / CATE)** — how much a treatment (e.g. a marketing coupon) changes an individual's outcome. Standard uplift models optimize prediction accuracy, but this project introduces a **decision-focused loss** that directly optimizes the downstream treatment allocation policy.
 
-The core model (`XXXModel`) combines:
+The core model (`DFUMModel`) combines:
 - A **shared layer** that processes treatment and control branches together
 - A **prediction loss** (binary cross-entropy on outcome)
 - A **decision loss** (policy-gradient-style ranking loss on uplift scores)
@@ -51,7 +51,7 @@ Decision-Focused-Uplift-Modeling/
 
 ---
 
-## Model: DFUM with Shared Layer (`XXXModel`)
+## Model: DFUM with Shared Layer (`DFUMModel`)
 
 **Architecture:**
 - Input: 12 features (CRITEO-UPLIFT v2) + treatment indicator

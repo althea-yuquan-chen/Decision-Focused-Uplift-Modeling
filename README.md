@@ -1,17 +1,19 @@
 # Decision-Focused Uplift Modeling (DFUM)
 
-A research implementation of **Decision-Focused Uplift Modeling**, a framework that jointly optimizes uplift prediction and treatment allocation decisions. The model (**DFUM with Shared Layer**) is evaluated on the public CRITEO-UPLIFT v2 dataset, and benchmarked against S-Learner, X-Learner, UpliftRank, and GRF baselines.
+A research implementation of **Decision-Focused Uplift Modeling**, a framework that jointly optimizes uplift prediction and treatment allocation decisions under a top-K treatment budget. The model (**DFUM with Shared Layer**) is evaluated on the public CRITEO-UPLIFT v2 dataset, and benchmarked against S-Learner, X-Learner, UpliftRank, and GRF baselines.
+
+> **Note:** the original DFUM notebook is deprecated — see `code/my_dfum_criteo_DEPRECATED_no_budget.ipynb`. Its decision loss had no top-K budget constraint, and a separate training-loop bug meant its alpha sweep never actually varied alpha. `code/my_dfum_criteo_topk.ipynb` is the current model.
 
 ---
 
 ## Overview
 
-Uplift modeling estimates the **Individual Treatment Effect (ITE / CATE)** — how much a treatment (e.g. a marketing coupon) changes an individual's outcome. Standard uplift models optimize prediction accuracy, but this project introduces a **decision-focused loss** that directly optimizes the downstream treatment allocation policy.
+Uplift modeling estimates the **Individual Treatment Effect (ITE / CATE)** — how much a treatment (e.g. a marketing coupon) changes an individual's outcome. Standard uplift models optimize prediction accuracy, but this project introduces a **decision-focused loss** that directly optimizes the downstream treatment allocation policy — specifically, the policy value of treating the top-K individuals by predicted uplift, where K is a budget constraint (you can't afford to treat everyone).
 
-The core model (`DFUMModel`) combines:
+The core model (`DFUMModel`, in `code/my_dfum_criteo_topk.ipynb`) combines:
 - A **shared layer** that processes treatment and control branches together
 - A **prediction loss** (binary cross-entropy on outcome)
-- A **decision loss** (policy-gradient-style ranking loss on uplift scores)
+- A **decision loss** derived from the Lagrangian dual of the top-K selection LP: `maximize Σx_i·τ_i s.t. Σx_i=K, 0≤x_i≤1`, whose dual `g(λ) = Σmax(0, τ_i−λ) + λK` is minimized in closed form at `λ* = the K-th largest τ̂` (an order statistic — computed directly each batch, not learned)
 - A tunable **alpha** parameter balancing the two losses: `total_loss = prediction_loss + α * decision_loss`
 
 ---
@@ -21,8 +23,9 @@ The core model (`DFUMModel`) combines:
 ```
 Decision-Focused-Uplift-Modeling/
 ├── code/
-│   ├── my_dfum_criteo.ipynb                     # ★ Main model — DFUM with shared layer on Criteo
-│   ├── my_dfum_criteo_v4.ipynb                  # Earlier model version (v4, prediction-loss only)
+│   ├── my_dfum_criteo_topk.ipynb                 # ★ Main model — DFUM with top-K budget-constrained decision loss
+│   ├── my_dfum_criteo_DEPRECATED_no_budget.ipynb # DEPRECATED — no budget constraint; see notebook header
+│   ├── my_dfum_criteo_v4.ipynb                  # Abandoned earlier draft (separate lambda_k bug, see notebook)
 │   ├── baseline_uplift_criteo.ipynb             # Baseline: S-Learner, X-Learner, UpliftRank on Criteo
 │   ├── baseline_roi_criteo.ipynb                # Baseline: ROI ranking model on Criteo
 │   └── baseline_marginal_utility_criteo.ipynb   # Baseline: Marginal utility model on Criteo
@@ -34,14 +37,12 @@ Decision-Focused-Uplift-Modeling/
 │   └── Metric.py             # Evaluation metrics: AUCC, MT-AUCC
 ├── model_file/
 │   └── uplift/criteo/final_model/
-│       ├── my_dfum/
-│       │   ├── v5_total_batch_1mil_epoch_1k/         # Final weights: α ∈ {0.2, 0.4, 0.6} × 20 seeds
-│       │   └── v5_total_batch_1mil_epoch_1k_iter_10/ # Variant: α ∈ {0.1, 0.2} × 10 seeds
+│       ├── my_dfum_topk/       # Weights from the current top-K model (populated by my_dfum_criteo_topk.ipynb)
 │       ├── slearner/          # S-Learner saved weights (20 seeds)
 │       ├── xlearner/          # X-Learner saved weights (tau_0 + tau_1, 20 seeds each)
 │       └── upliftRank/        # UpliftRank saved weights (20 seeds, standard + 10mil variant)
 ├── results/
-│   ├── my_dfum_avg_uplift_gain.csv    # DFUM average uplift gain curve
+│   ├── my_dfum_topk_avg_uplift_gain.csv # DFUM (top-K) average uplift gain curve — current model
 │   ├── grf_avg_uplift_gain.csv        # GRF baseline average uplift gain curve
 │   ├── xlearner_avg_uplift_gain.csv   # X-Learner baseline average uplift gain curve
 │   └── slearner_avg_uplift_gain.csv   # S-Learner baseline average uplift gain curve
@@ -51,7 +52,7 @@ Decision-Focused-Uplift-Modeling/
 
 ---
 
-## Model: DFUM with Shared Layer (`DFUMModel`)
+## Model: DFUM with Shared Layer (`DFUMModel`, `code/my_dfum_criteo_topk.ipynb`)
 
 **Architecture:**
 - Input: 12 features (CRITEO-UPLIFT v2) + treatment indicator
@@ -65,16 +66,19 @@ Decision-Focused-Uplift-Modeling/
 total_loss = prediction_loss + α * decision_loss
 ```
 - `prediction_loss`: Binary cross-entropy on outcome prediction
-- `decision_loss`: Policy-gradient ranking loss — maximizes expected reward when treating individuals ranked highest by τ̂
-- `α`: Trade-off parameter, swept over `{0.2, 0.4, 0.6}` (final runs) and `{0.1, 0.2}` (iter-10 runs)
+- `decision_loss`: top-K budget-constrained policy value. Derived from the Lagrangian dual of `maximize Σx_i·τ_i s.t. Σx_i=K, 0≤x_i≤1`, whose dual `g(λ) = Σmax(0, τ_i−λ) + λK` is minimized in closed form at `λ* = the K-th largest τ̂`. Each batch, for each budget fraction `k` in `k_fracs`: `λ` is computed directly via `tf.math.top_k` (no gradient through it), `gate = sigmoid((τ̂−λ)/temperature)` softens the top-K indicator for gradient flow, and the policy value is a self-normalized IPS estimate with fixed denominators `k·n1/N`, `k·n0/N`
+- `α`: Trade-off parameter, swept over `{0.2, 0.4, 0.6}`
+- `k_fracs`: Budget fractions the decision loss is averaged over, default `(0.1, 0.2, 0.3)`
 
-**Training config (final runs):**
+**Training config (matches the deprecated model's final-run scale; not yet re-run at this full scale for the top-K version — see notebook):**
 - Dataset: CRITEO-UPLIFT v2 (13M rows, 70/30 train-test split)
 - Batch size: 1,000,000
 - Epochs: 1,000
 - Optimizer: Adam (lr=0.005)
 - Seeds: 20 independent runs per alpha value
 - Validation split: 20% of training data
+
+**Validated at reduced scale** (600k-row Criteo subsample, 3 seeds, against this repo's own S-Learner/X-Learner/GRF): wins on causalml AUUC in all 3 seeds (0.864/0.816/0.824 vs. S-Learner 0.848/0.677/0.567, X-Learner 0.750/0.794/0.637, GRF 0.814/0.800/0.797). See `code/my_dfum_criteo_topk.ipynb`'s header cell for the full writeup.
 
 ---
 
@@ -118,12 +122,11 @@ total_loss = prediction_loss + α * decision_loss
 
 ### Prerequisites
 
-- Python 3.8+
-- TensorFlow 2.4.1
-- Keras 2.4.3
+- Python 3.11
+- TensorFlow 2.21 (Keras 3)
 
 ```bash
-pip install tensorflow==2.4.1 keras==2.4.3 pandas numpy scikit-learn matplotlib
+pip install tensorflow pandas numpy scikit-learn matplotlib
 ```
 
 For **AUUC** evaluation:
@@ -139,7 +142,7 @@ pip install econml
 ### Running the main model
 
 1. Download CRITEO-UPLIFT v2 and place it at `data/criteo-uplift-v2.1.csv`
-2. Open `code/my_dfum_criteo.ipynb`
+2. Open `code/my_dfum_criteo_topk.ipynb`
 3. Run cells sequentially — training, evaluation, and comparison plots are all included
 
 > **Note:** Paths in notebooks may need adjustment depending on your local directory structure (see `README.txt` note 0).
@@ -148,7 +151,7 @@ pip install econml
 
 ## Results
 
-Evaluation results (average uplift gain curves over 20 seeds) are stored in `results/`. The DFUM model (`my_dfum_avg_uplift_gain.csv`) is compared against S-Learner, X-Learner, and GRF baselines.
+Evaluation results (average uplift gain curves) are stored in `results/`. The current DFUM model (`my_dfum_topk_avg_uplift_gain.csv`) is compared against S-Learner, X-Learner, and GRF baselines. The deprecated model's weights and results have been deleted (retraining is planned via `code/my_dfum_criteo_topk.ipynb`, not a fair comparison point going forward).
 
 ---
 
@@ -156,8 +159,8 @@ Evaluation results (average uplift gain curves over 20 seeds) are stored in `res
 
 | Package | Version | Purpose |
 |---|---|---|
-| TensorFlow | 2.4.1 | Model training |
-| Keras | 2.4.3 | Neural network layers |
+| TensorFlow | 2.21 | Model training |
+| Keras | 3.x (bundled with TensorFlow) | Neural network layers |
 | CausalML | latest | AUUC metric |
 | EconML | latest | GRF baseline |
 | pandas, numpy | latest | Data processing |

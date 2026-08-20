@@ -18,6 +18,19 @@ The core model (`DFUMModel`, in `code/my_dfum_criteo_topk.ipynb`) combines:
 
 ---
 
+## Related Work
+
+The idea of replacing a two-stage "predict-then-optimize" uplift pipeline with a loss that differentiates through the downstream allocation decision is not new to this repo — it's the same technique family as **Decision Focused Causal Learning (DFCL)** (Zhou, Huang, et al., *KDD 2024*, [arXiv:2407.13664](https://arxiv.org/abs/2407.13664)) and its 2025 follow-up **Bi-DFCL** ([arXiv:2510.19517](https://arxiv.org/abs/2510.19517)), both from Meituan/Nanjing University, deployed and A/B-tested at production scale.
+
+This repo's decision loss is a deliberately simpler, single-machine-reproducible member of that family, and the differences are worth being explicit about:
+- **Decision problem:** DFCL solves a multi-level knapsack (each user gets one of several discrete treatment intensities, under a continuous cost budget); this repo solves the simpler binary top-K selection problem (treat or don't, under a headcount budget).
+- **Budget handling:** DFCL's decision loss integrates the Lagrangian dual objective over the *entire* space of budget levels (λ), so it's budget-agnostic at inference time. This repo instead averages over a small fixed set of budget fractions (`k_fracs = (0.1, 0.2, 0.3)`) — cheaper to compute, but only validated at those specific operating points.
+- **Gradient estimator:** DFCL compares three estimators (softmax/policy-learning, max-entropy regularization, and an "improved finite-difference" black-box estimator, which wins in their experiments). This repo uses a single sigmoid relaxation of the top-K indicator.
+
+On Criteo-Uplift-v2 (also 70/30 split), DFCL's best variant (DFCL-IFD) improves a custom ROI-ranking metric ("AUCC") by **+3.94%** over an S-Learner two-stage baseline; their 2025 follow-up pushes this to **+9.37%** by fusing observational and experimental data. Their task setup (ROI ranking, `visit`/`conversion` reinterpreted as cost/value) differs enough from this repo's (binary top-K on `visit` alone, evaluated via causalml AUUC) that the numbers aren't directly comparable — but the magnitude of DFCL's own gain over its baseline is a useful sanity check: this repo's α=0.6 top-K model beats its own S-Learner/GRF baselines by a similar 2–4%, which is the same order of magnitude as a peer-reviewed, production-validated result on the same dataset, not an implausibly large claim.
+
+---
+
 ## Repository Structure
 
 ```

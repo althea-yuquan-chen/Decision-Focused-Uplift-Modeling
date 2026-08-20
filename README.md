@@ -67,18 +67,30 @@ total_loss = prediction_loss + α * decision_loss
 ```
 - `prediction_loss`: Binary cross-entropy on outcome prediction
 - `decision_loss`: top-K budget-constrained policy value. Derived from the Lagrangian dual of `maximize Σx_i·τ_i s.t. Σx_i=K, 0≤x_i≤1`, whose dual `g(λ) = Σmax(0, τ_i−λ) + λK` is minimized in closed form at `λ* = the K-th largest τ̂`. Each batch, for each budget fraction `k` in `k_fracs`: `λ` is computed directly via `tf.math.top_k` (no gradient through it), `gate = sigmoid((τ̂−λ)/temperature)` softens the top-K indicator for gradient flow, and the policy value is a self-normalized IPS estimate with fixed denominators `k·n1/N`, `k·n0/N`
-- `α`: Trade-off parameter, swept over `{0.2, 0.4, 0.6}`
+- `α`: Trade-off parameter, swept over `{0.0, 0.2, 0.4, 0.6}` (`0.0` is the decision-loss-off ablation baseline)
 - `k_fracs`: Budget fractions the decision loss is averaged over, default `(0.1, 0.2, 0.3)`
 
-**Training config (matches the deprecated model's final-run scale; not yet re-run at this full scale for the top-K version — see notebook):**
-- Dataset: CRITEO-UPLIFT v2 (13M rows, 70/30 train-test split)
+**Training config (full run):**
+- Dataset: CRITEO-UPLIFT v2 (13.98M rows, 70/30 train-test split)
 - Batch size: 1,000,000
-- Epochs: 1,000
+- Epochs: 200 (right-sized from the deprecated model's 1,000 via an empirical convergence probe — val_loss plateaus well before 200 on the full data)
 - Optimizer: Adam (lr=0.005)
-- Seeds: 20 independent runs per alpha value
+- Seeds: 10 independent runs per alpha value
 - Validation split: 20% of training data
 
-**Validated at reduced scale** (600k-row Criteo subsample, 3 seeds, against this repo's own S-Learner/X-Learner/GRF): wins on causalml AUUC in all 3 seeds (0.864/0.816/0.824 vs. S-Learner 0.848/0.677/0.567, X-Learner 0.750/0.794/0.637, GRF 0.814/0.800/0.797). See `code/my_dfum_criteo_topk.ipynb`'s header cell for the full writeup.
+**Full-scale results**, evaluated on the same held-out test split (4,193,800 rows) as the S-Learner/X-Learner/GRF baselines below via this repo's own causalml AUUC metric:
+
+| Model | Mean AUUC | Std | seeds |
+|---|---|---|---|
+| S-Learner | 0.8440 | 0.0054 | 20 |
+| X-Learner | 0.8304 | 0.0377 | 20 |
+| GRF | 0.8485 | 0.0025 | 20 |
+| DFUM Top-K, α=0 (ablation, decision loss off) | 0.8017 | 0.0413 | 10 |
+| DFUM Top-K, α=0.2 | 0.8476 | 0.0181 | 10 |
+| DFUM Top-K, α=0.4 | 0.8596 | 0.0200 | 10 |
+| **DFUM Top-K, α=0.6 (best)** | **0.8671** | **0.0164** | 10 |
+
+DFUM Top-K (α=0.6) beats all three baselines (+2.2% over GRF, +2.7% over S-Learner, +4.4% over X-Learner) with lower variance than X-Learner. The α=0 ablation underperforms every baseline and AUUC rises monotonically as α increases — evidence the win comes from the decision loss itself, not just the shared-layer architecture. These are comparisons against this repo's own baselines only; no comparison against externally published SOTA uplift-modeling results on Criteo-uplift-v2 has been done. See `code/my_dfum_criteo_topk.ipynb`'s header cell for the full writeup, including an earlier 600k-row/3-seed validation pass.
 
 ---
 
@@ -151,7 +163,7 @@ pip install econml
 
 ## Results
 
-Evaluation results (average uplift gain curves) are stored in `results/`. The current DFUM model (`my_dfum_topk_avg_uplift_gain.csv`) is compared against S-Learner, X-Learner, and GRF baselines. The deprecated model's weights and results have been deleted (retraining is planned via `code/my_dfum_criteo_topk.ipynb`, not a fair comparison point going forward).
+Evaluation results (average uplift gain curves) are stored in `results/`. The current DFUM model (`my_dfum_topk_avg_uplift_gain.csv`, full 13.98M-row dataset, best alpha=0.6) is compared against S-Learner, X-Learner, and GRF baselines (`slearner_avg_uplift_gain.csv`, `xlearner_avg_uplift_gain.csv`, `grf_avg_uplift_gain.csv`) run at the same full-data scale — see the results table under "Model: DFUM with Shared Layer" above. The deprecated model's weights and results have been deleted.
 
 ---
 

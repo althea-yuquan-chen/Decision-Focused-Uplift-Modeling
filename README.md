@@ -36,18 +36,13 @@ On Criteo-Uplift-v2 (also 70/30 split), DFCL's best variant (DFCL-IFD) improves 
 ```
 Decision-Focused-Uplift-Modeling/
 ├── code/
-│   ├── my_dfum_criteo_topk.ipynb                 # ★ Main model — DFUM with top-K budget-constrained decision loss
-│   ├── my_dfum_criteo_DEPRECATED_no_budget.ipynb # DEPRECATED — no budget constraint; see notebook header
-│   ├── my_dfum_criteo_v4.ipynb                  # Abandoned earlier draft (separate lambda_k bug, see notebook)
-│   ├── baseline_uplift_criteo.ipynb             # Baseline: S-Learner, X-Learner, UpliftRank on Criteo
-│   ├── baseline_roi_criteo.ipynb                # Baseline: ROI ranking model on Criteo
-│   └── baseline_marginal_utility_criteo.ipynb   # Baseline: Marginal utility model on Criteo
+│   ├── my_dfum_criteo_topk.ipynb                                   # ★ Main model — DFUM with top-K budget-constrained decision loss
+│   ├── my_dfum_criteo_DEPRECATED_no_budget.ipynb                   # DEPRECATED — no budget constraint; see notebook header
+│   ├── my_dfum_criteo_v4_DEPRECATED_shift_invariant_lambda.ipynb   # DEPRECATED — trainable lambda_k under softmax never trains; see notebook header
+│   └── baseline_uplift_criteo.ipynb                                # Baseline: S-Learner, X-Learner, UpliftRank on Criteo
 ├── model/
 │   ├── __init__.py
-│   ├── uplift_model.py       # Baseline CATE models: S-Learner, X-Learner, UpliftRank
-│   └── roi_model.py          # Baseline ROI models: ROI Rank, Direct Rank
-├── metric/
-│   └── Metric.py             # Evaluation metrics: AUCC, MT-AUCC
+│   └── uplift_model.py       # Baseline CATE models: S-Learner, X-Learner, UpliftRank
 ├── model_file/
 │   └── uplift/criteo/final_model/
 │       ├── my_dfum_topk/       # Weights from the current top-K model (populated by my_dfum_criteo_topk.ipynb)
@@ -91,19 +86,21 @@ total_loss = prediction_loss + α * decision_loss
 - Seeds: 10 independent runs per alpha value
 - Validation split: 20% of training data
 
-**Full-scale results**, evaluated on the same held-out test split (4,193,800 rows) as the S-Learner/X-Learner/GRF baselines below via this repo's own causalml AUUC metric:
+**Full-scale results**, evaluated on the same held-out test split (4,193,878 rows) as the S-Learner/X-Learner/GRF baselines below via this repo's own causalml AUUC metric:
 
 | Model | Mean AUUC | Std | seeds |
 |---|---|---|---|
-| S-Learner | 0.8440 | 0.0054 | 20 |
-| X-Learner | 0.8304 | 0.0377 | 20 |
+| S-Learner | 0.8362 | 0.0113 | 20 |
+| X-Learner | 0.8456 | 0.0096 | 20 |
 | GRF | 0.8485 | 0.0025 | 20 |
 | DFUM Top-K, α=0 (ablation, decision loss off) | 0.8017 | 0.0413 | 10 |
 | DFUM Top-K, α=0.2 | 0.8476 | 0.0181 | 10 |
 | DFUM Top-K, α=0.4 | 0.8596 | 0.0200 | 10 |
 | **DFUM Top-K, α=0.6 (best)** | **0.8671** | **0.0164** | 10 |
 
-DFUM Top-K (α=0.6) beats all three baselines (+2.2% over GRF, +2.7% over S-Learner, +4.4% over X-Learner) with lower variance than X-Learner. The α=0 ablation underperforms every baseline and AUUC rises monotonically as α increases — evidence the win comes from the decision loss itself, not just the shared-layer architecture. These are comparisons against this repo's own baselines only; no comparison against externally published SOTA uplift-modeling results on Criteo-uplift-v2 has been done. See `code/my_dfum_criteo_topk.ipynb`'s header cell for the full writeup, including an earlier 600k-row/3-seed validation pass.
+DFUM Top-K (α=0.6) beats all three baselines (+2.2% over GRF, +3.7% over S-Learner, +2.5% over X-Learner). The α=0 ablation underperforms every baseline and AUUC rises monotonically as α increases — evidence the win comes from the decision loss itself, not just the shared-layer architecture. These are comparisons against this repo's own baselines only; no comparison against externally published SOTA uplift-modeling results on Criteo-uplift-v2 has been done. See `code/my_dfum_criteo_topk.ipynb`'s header cell for the full writeup, including an earlier 600k-row/3-seed validation pass.
+
+A Qini cross-check (`results/qini_auuc_summary.csv`) on the same test split gives S-Learner 0.3388±0.0114, X-Learner 0.3490±0.0096, and DFUM Top-K α=0.6 0.3703±0.0167 (GRF not re-evaluated — no persisted model to reload at this scale). The gap between DFUM and the baselines is similar in absolute terms under Qini and under AUUC.
 
 ---
 
@@ -115,21 +112,15 @@ DFUM Top-K (α=0.6) beats all three baselines (+2.2% over GRF, +2.7% over S-Lear
 | X-Learner | Two-stage ITE estimator (τ₀ + τ₁) | `model/uplift_model.py` |
 | UpliftRank | Policy-gradient ranking on uplift | `model/uplift_model.py` |
 | GRF | Generalized Random Forests (via EconML) | External |
-| ROI Rank | Decision-focused ROI optimization | `model/roi_model.py` |
-| Direct Rank | Direct policy ranking | `model/roi_model.py` |
 
 ---
 
-## Evaluation Metric
+## Evaluation Metrics
 
-**AUUC (Area Under the Uplift Curve)** via [CausalML](https://causalml.readthedocs.io/en/latest/):
-- Measures how well the model ranks individuals by their true treatment effect
-- Results averaged over 20 independent runs per model
-- Uplift gain curves saved in `results/`
-
-**AUCC (Area Under the Cost Curve)** via `metric/Metric.py`:
-- Used for ROI and marginal utility models
-- Plots delta reward vs. delta cost across quantiles
+**AUUC (Area Under the Uplift Curve)** and **Qini** via [CausalML](https://causalml.readthedocs.io/en/latest/):
+- Measure how well the model ranks individuals by their true treatment effect (AUUC weights the whole ranking uniformly; Qini weights the head of the ranking more)
+- Results averaged over 20 independent runs per baseline, 10 per DFUM Top-K alpha setting
+- Uplift gain curves and the AUUC/Qini summary saved in `results/`
 
 ---
 
